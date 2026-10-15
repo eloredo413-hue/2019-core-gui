@@ -6,7 +6,10 @@
 
 	  * tapping / clicking the normal Roblox icon in the top-left
 	    opens and closes the 2019 menu instead of the modern one
-	  * Escape opens and closes it too
+	  * the phone's back button and Escape open it too (the modern
+	    menu they would open is closed again straight away)
+	  * while it is open, the Roblox icon shows as a white X that
+	    closes it
 
 	Only the menu module is loaded. The 2019 top bar, chat, player
 	list, backpack and loading screen are never created.
@@ -460,6 +463,210 @@ task.spawn(function()
 end)
 
 --============================================================*
+-- BACK BUTTON / ESCAPE
+--============================================================*
+--
+-- The phone's back button (and Escape on PC) opens the modern menu
+-- directly. When its frame appears, hide it, close it again with an
+-- Escape key press, and use the 2019 menu instead: open it, or go
+-- back a page / close it if it is already open.
+
+local GuiService = game:GetService("GuiService")
+
+local VirtualInputManager = (function()
+	local Success, Service = pcall(game.GetService, game, "VirtualInputManager")
+	return Success and Service or nil
+end)()
+
+local IsOpen = function()
+	local Success, Visible = pcall(function()
+		return Hub:GetVisibility()
+	end)
+	return Success and Visible == true
+end
+
+-- Escape now reaches the 2019 menu through the modern one, so its own
+-- Escape binding would toggle it twice.
+pcall(ContextActionService.UnbindAction, ContextActionService, "RBXEscapeMainMenu")
+
+local GoBack = function()
+
+	local HubObject = Hub.Instance
+
+	if IsOpen() and type(HubObject) == "table" and HubObject.PopMenu then
+		pcall(function()
+			HubObject:PopMenu(false, true)
+		end)
+	else
+		ToggleMenu()
+	end
+
+end
+
+task.spawn(function()
+
+	local RobloxGui = CoreGui:WaitForChild("RobloxGui", 30)
+	local Clipping = RobloxGui and RobloxGui:WaitForChild("SettingsClippingShield", 30)
+	local Shield = Clipping and Clipping:WaitForChild("SettingsShield", 30)
+
+	if not (Running and Shield) then
+		if Running then
+			warn("[2019 menu] modern menu not found; the back button may still open it")
+		end
+		return
+	end
+
+	local Closing = false
+
+	local Restore = function()
+		Closing = false
+		pcall(function()
+			Clipping.Visible = true
+		end)
+	end
+
+	table.insert(Connections, Shield:GetPropertyChangedSignal("Visible"):Connect(function()
+
+		if not Shield.Visible then
+			if Closing then
+				Restore()
+			end
+			return
+		end
+
+		if Closing or not Running then
+			return
+		end
+
+		Closing = true
+
+		-- Never show it.
+		pcall(function()
+			Clipping.Visible = false
+		end)
+
+		GoBack()
+
+		-- Close it the way Escape does, once it has finished opening.
+		task.defer(function()
+			if VirtualInputManager then
+				pcall(function()
+					VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Escape, false, game)
+					VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Escape, false, game)
+				end)
+			end
+		end)
+
+		-- Still open: try the back button's own signal.
+		task.delay(0.3, function()
+			if Closing and Shield.Visible and firesignal then
+				pcall(firesignal, GuiService.ShowLeaveConfirmation)
+			end
+		end)
+
+		-- Still open after that: give it back so the player can close it.
+		task.delay(1, function()
+			if Closing and Shield.Visible then
+				Restore()
+				warn("[2019 menu] could not close the modern menu")
+			end
+		end)
+
+	end))
+
+end)
+
+--============================================================*
+-- CLOSE BUTTON
+--============================================================*
+--
+-- While the 2019 menu is open it covers the top bar, so a white X is
+-- drawn above it, exactly over the Roblox icon. Tapping it closes the
+-- menu, like the 2023 top bar.
+
+local RunService = game:GetService("RunService")
+
+local CloseGui = Instance.new("ScreenGui")
+CloseGui.Name = "Legacy2019MenuClose"
+CloseGui.IgnoreGuiInset = true
+CloseGui.ResetOnSpawn = false
+CloseGui.DisplayOrder = LegacyGui.DisplayOrder + 1
+CloseGui.Parent = CoreGui
+
+-- A full-screen frame at (0, 0). Its AbsolutePosition turns the icon's
+-- on-screen position into a position inside this GUI.
+local Origin = Instance.new("Frame")
+Origin.Name = "Origin"
+Origin.BackgroundTransparency = 1
+Origin.Size = UDim2.fromScale(1, 1)
+Origin.Parent = CloseGui
+
+local CloseButton = Instance.new("TextButton")
+CloseButton.Name = "Close"
+CloseButton.Text = ""
+CloseButton.AutoButtonColor = false
+CloseButton.BackgroundColor3 = Color3.new(1, 1, 1)
+CloseButton.BorderSizePixel = 0
+CloseButton.Visible = false
+CloseButton.Parent = CloseGui
+
+local CLOSE_CORNER = UDim.new(0.18, 0)
+
+local CloseCorner = Instance.new("UICorner")
+CloseCorner.CornerRadius = CLOSE_CORNER
+CloseCorner.Parent = CloseButton
+
+for _, Angle in ipairs({ 45, -45 }) do
+
+	local Stroke = Instance.new("Frame")
+	Stroke.Name = "Stroke"
+	Stroke.AnchorPoint = Vector2.new(0.5, 0.5)
+	Stroke.Position = UDim2.fromScale(0.5, 0.5)
+	Stroke.Size = UDim2.fromScale(0.55, 0.07)
+	Stroke.Rotation = Angle
+	Stroke.BackgroundColor3 = Color3.fromRGB(57, 59, 61)
+	Stroke.BorderSizePixel = 0
+	Stroke.Parent = CloseButton
+
+	local Round = Instance.new("UICorner")
+	Round.CornerRadius = UDim.new(1, 0)
+	Round.Parent = Stroke
+
+end
+
+table.insert(Connections, CloseButton.Activated:Connect(function()
+	pcall(function()
+		Hub:SetVisibility(false)
+	end)
+end))
+
+table.insert(Connections, RunService.RenderStepped:Connect(function()
+
+	local Icon = Button.Parent
+
+	if not (IsOpen() and Icon and Icon:IsA("GuiObject") and Icon:IsDescendantOf(CoreGui)) then
+		CloseButton.Visible = false
+		return
+	end
+
+	local Offset = Origin.AbsolutePosition
+
+	CloseButton.Position = UDim2.fromOffset(
+		Icon.AbsolutePosition.X - Offset.X,
+		Icon.AbsolutePosition.Y - Offset.Y
+	)
+
+	CloseButton.Size = UDim2.fromOffset(Icon.AbsoluteSize.X, Icon.AbsoluteSize.Y)
+
+	-- Match the icon's shape (round on the newest top bar).
+	local IconCorner = Icon:FindFirstChildOfClass("UICorner")
+	CloseCorner.CornerRadius = IconCorner and IconCorner.CornerRadius or CLOSE_CORNER
+
+	CloseButton.Visible = true
+
+end))
+
+--============================================================*
 -- CLEAN-UP FOR THE NEXT RUN
 --============================================================*
 
@@ -479,6 +686,8 @@ Environment().Legacy2019Menu = {
 		pcall(ContextActionService.UnbindAction, ContextActionService, "RBXEscapeMainMenu")
 
 		Button:Destroy()
+
+		CloseGui:Destroy()
 
 		LegacyGui:Destroy()
 
