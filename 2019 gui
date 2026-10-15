@@ -73,6 +73,40 @@ for _, Name in ipairs({ "TopBarApp", "ExperienceChat" }) do
 	end
 end
 
+-- Everything that exists before Legacy loads belongs to the modern UI.
+-- Anything that shows up while it loads is the 2019 GUI.
+
+local GuiRoots = { CoreGui, RobloxGui }
+
+if gethui then
+	local Success, Hidden = pcall(gethui)
+	if Success and typeof(Hidden) == "Instance" and Hidden ~= CoreGui then
+		table.insert(GuiRoots, Hidden)
+	end
+end
+
+local Existing = {}
+
+for _, Root in ipairs(GuiRoots) do
+	for _, Child in ipairs(Root:GetChildren()) do
+		Existing[Child] = true
+	end
+end
+
+local Created = {}
+
+local Watching = true
+
+local Watchers = {}
+
+for _, Root in ipairs(GuiRoots) do
+	table.insert(Watchers, Root.ChildAdded:Connect(function(Child)
+		if Watching then
+			table.insert(Created, Child)
+		end
+	end))
+end
+
 -- Module
 
 local Suite = Environment().Suite or loadstring(game:HttpGet(
@@ -133,37 +167,178 @@ end)()
 -- HIDE EVERYTHING EXCEPT THE MENU
 --============================================================*
 
-local IsMenu = function(Object)
-	local Name = Object.Name:lower()
-	return Name:find("settings") ~= nil or Name:find("shield") ~= nil
+-- Things the 2019 GUI made, outside the menu: top bar, chat, player
+-- list, backpack, loading screen and so on.
+
+local IsNew = function(Object)
+	return not Existing[Object]
+		and Object.Name ~= "Legacy2019MenuIcon"
+		and Object ~= Legacy
 end
 
-local Hide = function(Object)
+local NewRoots = function()
 
-	if not Object:IsA("GuiObject") or IsMenu(Object) then
-		return
+	local Roots = {}
+
+	for _, Root in ipairs(GuiRoots) do
+		for _, Child in ipairs(Root:GetChildren()) do
+			if IsNew(Child) then
+				table.insert(Roots, Child)
+			end
+		end
 	end
 
+	if
+		typeof(LegacyGui) == "Instance"
+		and IsNew(LegacyGui)
+		and not table.find(GuiRoots, LegacyGui)
+		and not table.find(Roots, LegacyGui)
+	then
+		table.insert(Roots, LegacyGui)
+	end
+
+	return Roots
+
+end
+
+-- The 2019 menu frame. Only one made by Legacy counts; the modern
+-- RobloxGui has a frame with the same name.
+
+local FindMenu = function()
+
+	if SettingsHub and typeof(SettingsHub.ClippingShield) == "Instance" then
+		return SettingsHub.ClippingShield
+	end
+
+	for _, Root in ipairs(NewRoots()) do
+
+		if Root.Name == "SettingsClippingShield" then
+			return Root
+		end
+
+		local Found = Root:FindFirstChild("SettingsClippingShield", true)
+
+		if Found then
+			return Found
+		end
+
+	end
+
+	return nil
+
+end
+
+local Menu
+
+do
+	local StartTime = os.clock()
+
+	repeat
+		Menu = FindMenu()
+		if not Menu then
+			task.wait(0.1)
+		end
+	until Menu or os.clock() - StartTime > 10
+
+	if not Menu then
+		warn("[2019 menu] the 2019 menu frame was not found; hiding all of the 2019 GUI")
+	end
+end
+
+local Lock = function(Object, Property, Value)
+
 	pcall(function()
-		Object.Visible = false
+		Object[Property] = Value
 	end)
 
-	Object:GetPropertyChangedSignal("Visible"):Connect(function()
-		if Object.Visible then
-			Object.Visible = false
+	Object:GetPropertyChangedSignal(Property):Connect(function()
+		if Object[Property] ~= Value then
+			Object[Property] = Value
 		end
 	end)
 
 end
 
-if typeof(LegacyGui) == "Instance" then
+local Handled = {}
 
-	for _, Child in ipairs(LegacyGui:GetChildren()) do
-		Hide(Child)
+local Hide
+
+Hide = function(Object)
+
+	if Handled[Object] or Object.Name == "Legacy2019MenuIcon" then
+		return
 	end
 
-	LegacyGui.ChildAdded:Connect(Hide)
+	Handled[Object] = true
 
+	-- The menu and everything in it stays as it is.
+	if Menu and (Object == Menu or Object:IsDescendantOf(Menu)) then
+		return
+	end
+
+	-- A frame or screen that holds the menu stays visible, but its
+	-- other children are hidden.
+	if Menu and Menu:IsDescendantOf(Object) then
+
+		for _, Child in ipairs(Object:GetChildren()) do
+			Hide(Child)
+		end
+
+		Object.ChildAdded:Connect(Hide)
+
+		return
+
+	end
+
+	if Object:IsA("LayerCollector") then
+
+		Lock(Object, "Enabled", false)
+
+	elseif Object:IsA("GuiObject") then
+
+		Lock(Object, "Visible", false)
+
+	elseif Object:IsA("Folder") or Object:IsA("Configuration") then
+
+		for _, Child in ipairs(Object:GetChildren()) do
+			Hide(Child)
+		end
+
+		Object.ChildAdded:Connect(Hide)
+
+	end
+
+end
+
+for _, Root in ipairs(NewRoots()) do
+	Hide(Root)
+end
+
+-- Keep catching 2019 pieces that appear shortly after start-up,
+-- then stop so later modern prompts are left alone.
+
+for _, Child in ipairs(Created) do
+	if Child.Parent and IsNew(Child) then
+		Hide(Child)
+	end
+end
+
+task.delay(5, function()
+	Watching = false
+	for _, Watcher in ipairs(Watchers) do
+		Watcher:Disconnect()
+	end
+end)
+
+for _, Root in ipairs(GuiRoots) do
+	local Connection
+	Connection = Root.ChildAdded:Connect(function(Child)
+		if Watching then
+			Hide(Child)
+		else
+			Connection:Disconnect()
+		end
+	end)
 end
 
 --============================================================*
@@ -204,11 +379,7 @@ end)
 --============================================================*
 
 local FindShield = function()
-	if typeof(LegacyGui) ~= "Instance" then
-		return nil
-	end
-	local Clipping = LegacyGui:FindFirstChild("SettingsClippingShield", true)
-	return Clipping and Clipping:FindFirstChild("SettingsShield", true)
+	return Menu and Menu:FindFirstChild("SettingsShield", true)
 end
 
 local ToggleMenu = function()
