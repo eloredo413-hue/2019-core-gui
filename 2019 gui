@@ -275,7 +275,7 @@ local DROPDOWN_IMAGE = "rbxasset://textures/ui/Settings/MenuBarAssets/MenuButton
 local ResetDropDowns = function()
 	for _, Object in ipairs(LegacyGui:GetDescendants()) do
 		if
-			Object.Name == "DropDownFrame"
+			Object.Name == "DropDownFrameButton"
 			and Object:IsA("ImageButton")
 			and GuiService.SelectedObject ~= Object
 		then
