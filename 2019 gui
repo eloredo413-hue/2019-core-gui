@@ -583,18 +583,11 @@ end)
 -- CLOSE BUTTON
 --============================================================*
 --
--- While the 2019 menu is open, the Roblox icon shows the X image (a
--- white rounded square with an X). Tapping it closes the menu, like
--- the 2023 top bar.
+-- While the 2019 menu is open, the Roblox icon shows the X Roblox's
+-- own 2023 top bar used: a white rounded square with the X cut out.
+-- Tapping it closes the menu.
 
-local CLOSE_IMAGE_ID = "73899106811349"
-
--- Tried in order until one loads: the asset's thumbnail (works for
--- decals and images), then the id as an image.
-local CLOSE_IMAGES = {
-	"rbxthumb://type=Asset&id=" .. CLOSE_IMAGE_ID .. "&w=150&h=150",
-	"rbxassetid://" .. CLOSE_IMAGE_ID,
-}
+local CLOSE_IMAGE = "rbxasset://textures/ui/TopBar/close.png"
 
 local RunService = game:GetService("RunService")
 
@@ -602,7 +595,7 @@ local RunService = game:GetService("RunService")
 -- it always draws on top of the logo and moves with it.
 local CloseButton = Instance.new("ImageButton")
 CloseButton.Name = CLOSE_NAME
-CloseButton.Image = ""
+CloseButton.Image = CLOSE_IMAGE
 CloseButton.ScaleType = Enum.ScaleType.Fit
 CloseButton.AutoButtonColor = false
 CloseButton.BackgroundTransparency = 1
@@ -612,75 +605,53 @@ CloseButton.Size = UDim2.fromScale(1, 1)
 CloseButton.ZIndex = Button.ZIndex + 1
 CloseButton.Visible = false
 
--- A drawn X (white rounded square, dark X), shown only until the
--- image has loaded, or for good if it never does, so the button is
--- never invisible.
-local Fallback = Instance.new("Frame")
-Fallback.Name = "Fallback"
-Fallback.Size = UDim2.fromScale(1, 1)
-Fallback.BackgroundColor3 = Color3.new(1, 1, 1)
-Fallback.BorderSizePixel = 0
-Fallback.Active = false
-Fallback.Parent = CloseButton
-
-local FallbackCorner = Instance.new("UICorner")
-FallbackCorner.CornerRadius = UDim.new(0.18, 0)
-FallbackCorner.Parent = Fallback
-
-for _, Angle in ipairs({ 45, -45 }) do
-
-	local Stroke = Instance.new("Frame")
-	Stroke.Name = "Stroke"
-	Stroke.AnchorPoint = Vector2.new(0.5, 0.5)
-	Stroke.Position = UDim2.fromScale(0.5, 0.5)
-	Stroke.Size = UDim2.fromScale(0.55, 0.07)
-	Stroke.Rotation = Angle
-	Stroke.BackgroundColor3 = Color3.fromRGB(57, 59, 61)
-	Stroke.BorderSizePixel = 0
-	Stroke.Active = false
-	Stroke.Parent = Fallback
-
-	local Round = Instance.new("UICorner")
-	Round.CornerRadius = UDim.new(1, 0)
-	Round.Parent = Stroke
-
-end
-
-task.spawn(function()
-
-	local ContentProvider = game:GetService("ContentProvider")
-
-	for _, Image in ipairs(CLOSE_IMAGES) do
-
-		local Status
-
-		pcall(function()
-			ContentProvider:PreloadAsync({ Image }, function(_, FetchStatus)
-				Status = FetchStatus
-			end)
-		end)
-
-		if not Running then
-			return
-		end
-
-		if Status == Enum.AssetFetchStatus.Success then
-			CloseButton.Image = Image
-			Fallback.Visible = false
-			return
-		end
-
-	end
-
-	warn("[2019 menu] the X image (asset " .. CLOSE_IMAGE_ID .. ") did not load; showing a drawn X instead")
-
-end)
-
 table.insert(Connections, CloseButton.Activated:Connect(function()
 	pcall(function()
 		Hub:SetVisibility(false)
 	end)
 end))
+
+-- The X is cut out of the square, so whatever is behind it shows
+-- through. While it is shown, hide the icon's own background and the
+-- images inside it (the logo), and put them back afterwards.
+
+local HiddenBackground = {} -- [ImageButton] = its ImageTransparency
+local HiddenImages = {} -- [ImageLabel] = true
+
+local HideIconVisuals = function(Icon)
+
+	if Icon:IsA("ImageButton") and HiddenBackground[Icon] == nil then
+		HiddenBackground[Icon] = Icon.ImageTransparency
+		Icon.ImageTransparency = 1
+	end
+
+	for _, Child in ipairs(Icon:GetChildren()) do
+		if Child:IsA("ImageLabel") and Child.Visible and not HiddenImages[Child] then
+			HiddenImages[Child] = true
+			Child.Visible = false
+		end
+	end
+
+end
+
+local RestoreIconVisuals = function()
+
+	for Icon, Transparency in pairs(HiddenBackground) do
+		pcall(function()
+			Icon.ImageTransparency = Transparency
+		end)
+	end
+
+	for Image in pairs(HiddenImages) do
+		pcall(function()
+			Image.Visible = true
+		end)
+	end
+
+	table.clear(HiddenBackground)
+	table.clear(HiddenImages)
+
+end
 
 table.insert(Connections, RunService.RenderStepped:Connect(function()
 
@@ -688,10 +659,19 @@ table.insert(Connections, RunService.RenderStepped:Connect(function()
 	local Icon = Button.Parent
 
 	if Icon and CloseButton.Parent ~= Icon then
+		RestoreIconVisuals()
 		CloseButton.Parent = Icon
 	end
 
-	CloseButton.Visible = IsOpen() and Icon ~= nil
+	local Show = IsOpen() and Icon ~= nil
+
+	CloseButton.Visible = Show
+
+	if Show then
+		HideIconVisuals(Icon)
+	elseif next(HiddenBackground) or next(HiddenImages) then
+		RestoreIconVisuals()
+	end
 
 end))
 
@@ -713,6 +693,8 @@ Environment().Legacy2019Menu = {
 		end)
 
 		pcall(ContextActionService.UnbindAction, ContextActionService, "RBXEscapeMainMenu")
+
+		RestoreIconVisuals()
 
 		Button:Destroy()
 
