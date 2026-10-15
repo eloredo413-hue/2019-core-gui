@@ -730,7 +730,14 @@ local Chat2017 = (function()
 			error(`no Chat module for {Settings.Year}`)
 		end
 
-		-- Some executors can't compile Luau type annotations.
+		-- Some executors can't compile Luau type annotations, and the
+		-- 2017 chat has one. Drop it so the chat still loads there.
+		Chat.Source = Chat.Source:gsub(
+			"local RBXGeneral: TextChannel =",
+			"local RBXGeneral =",
+			1
+		)
+
 		local Compiled, CompileError = loadstring(Chat.Source)
 
 		if not Compiled then
