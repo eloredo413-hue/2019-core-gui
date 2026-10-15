@@ -1,14 +1,15 @@
 --[[
 	2019 ESCAPE MENU ONLY
 
-	Keeps the modern Roblox UI (top bar, chat, player list, backpack)
-	and swaps in only the 2019 escape menu:
+	Keeps the modern Roblox UI exactly as it is and adds only the
+	2019 escape menu from the Legacy model:
 
-	  * clicking the normal Roblox icon in the top-left opens / closes
-	    the 2019 menu instead of the modern one
-	  * the Escape key opens / closes the 2019 menu
+	  * tapping / clicking the normal Roblox icon in the top-left
+	    opens and closes the 2019 menu instead of the modern one
+	  * Escape opens and closes it too
 
-	Everything else the Legacy model creates is hidden.
+	Only the menu module is loaded. The 2019 top bar, chat, player
+	list, backpack and loading screen are never created.
 ]]
 
 if (not game:IsLoaded()) then
@@ -21,90 +22,48 @@ local Environment = (getgenv or function() return _G end)
 
 local Settings = Environment().LegacySettings or ({
 	Year = 2017,
-
-	SafeChat = true,
 })
 
 -- Services
 
 local CoreGui = game:GetService("CoreGui")
 
-local StarterGui = game:GetService("StarterGui")
+local ContextActionService = game:GetService("ContextActionService")
 
-local GuiService = game:GetService("GuiService")
+-- Constants
 
--- Variables
+-- The menu's modules look their GUI up as CoreGui.NewRobloxGui.
+local GUI_NAME = "NewRobloxGui"
 
-local RobloxGui = CoreGui:WaitForChild("RobloxGui", 30) or CoreGui:FindFirstChild("RobloxGui")
+local BUTTON_NAME = "Legacy2019MenuButton"
 
--- Remember what the modern UI looks like before Legacy touches it,
--- so it can be put back afterwards.
+-- Stop a previous run of this script first, so two menus never
+-- fight over the Roblox icon.
 
-local CoreGuiTypes = {
-	Enum.CoreGuiType.PlayerList,
-	Enum.CoreGuiType.Health,
-	Enum.CoreGuiType.Backpack,
-	Enum.CoreGuiType.Chat,
-	Enum.CoreGuiType.EmotesMenu,
-}
+local Previous = Environment().Legacy2019Menu
 
-local CoreGuiState = {}
-
-for _, Type in ipairs(CoreGuiTypes) do
-	local Success, Enabled = pcall(StarterGui.GetCoreGuiEnabled, StarterGui, Type)
-	if Success then
-		CoreGuiState[Type] = Enabled
-	end
+if type(Previous) == "table" and type(Previous.Stop) == "function" then
+	pcall(Previous.Stop)
 end
 
-local ModernScreenGuis = {}
+local Running = true
 
-for _, Name in ipairs({ "TopBarApp", "ExperienceChat" }) do
-	local Gui = CoreGui:FindFirstChild(Name)
-	if Gui then
-		if Gui:IsA("ScreenGui") then
-			ModernScreenGuis[Gui] = Gui.Enabled
-		end
-		for _, Object in ipairs(Gui:GetDescendants()) do
-			if Object:IsA("ScreenGui") then
-				ModernScreenGuis[Object] = Object.Enabled
-			end
-		end
-	end
-end
+local Connections = {}
 
--- Everything that exists before Legacy loads belongs to the modern UI.
--- Anything that shows up while it loads is the 2019 GUI.
+-- Functions
 
-local GuiRoots = { CoreGui, RobloxGui }
+local Lock = function(Object, Property, Value)
 
-if gethui then
-	local Success, Hidden = pcall(gethui)
-	if Success and typeof(Hidden) == "Instance" and Hidden ~= CoreGui then
-		table.insert(GuiRoots, Hidden)
-	end
-end
+	pcall(function()
+		Object[Property] = Value
+	end)
 
-local Existing = {}
-
-for _, Root in ipairs(GuiRoots) do
-	for _, Child in ipairs(Root:GetChildren()) do
-		Existing[Child] = true
-	end
-end
-
-local Created = {}
-
-local Watching = true
-
-local Watchers = {}
-
-for _, Root in ipairs(GuiRoots) do
-	table.insert(Watchers, Root.ChildAdded:Connect(function(Child)
-		if Watching then
-			table.insert(Created, Child)
+	table.insert(Connections, Object:GetPropertyChangedSignal(Property):Connect(function()
+		if Object[Property] ~= Value then
+			Object[Property] = Value
 		end
 	end))
+
 end
 
 -- Module
@@ -113,298 +72,209 @@ local Suite = Environment().Suite or loadstring(game:HttpGet(
 	"https://raw.githubusercontent.com/yeku/forks/refs/heads/main/Scripts/RBXMSuite.luau"
 ))()
 
+-- Load the model without running any of its scripts.
+
 local Legacy = Suite.launch(
 	Suite.download(
 		"Elite-random/test@idk",
 		"Legacy_2019.rbxm"
 	),
 	{
-		runscripts = true,
+		runscripts = false,
 		debug = true,
-		verbose = false
 	}
 )
 
--- Setup
+--============================================================*
+-- FIND THE MENU
+--============================================================*
+--
+-- Legacy/Core/<Year>/NewRobloxGui/Modules/Settings/SettingsHub
 
-local LegacyGui =
-	Suite.require(Legacy):Start(
-		Settings.Year,
-		Settings.SafeChat
-	)
+local HasMenu = function(Folder)
+	local Gui = Folder:FindFirstChild(GUI_NAME)
+	local Modules = Gui and Gui:FindFirstChild("Modules")
+	local SettingsFolder = Modules and Modules:FindFirstChild("Settings")
+	return SettingsFolder ~= nil and SettingsFolder:FindFirstChild("SettingsHub") ~= nil
+end
 
--- The settings hub module the Legacy GUI already loaded. Suite caches
--- required modules, so this is the same hub that is on screen.
+local Client = (function()
 
-local SettingsHub = (function()
+	local Core = Legacy:FindFirstChild("Core")
 
-	local Module
+	if not Core then
+		return nil
+	end
 
-	for _, Object in ipairs(Legacy:GetDescendants()) do
-		if Object.Name == "SettingsHub" and Object:IsA("ModuleScript") then
-			Module = Object
-			break
+	for _, Year in ipairs({ tostring(Settings.Year), "2017" }) do
+		local Folder = Core:FindFirstChild(Year)
+		if Folder and HasMenu(Folder) then
+			return Folder
 		end
 	end
 
-	if not Module then
-		warn("[2019 menu] SettingsHub module not found")
-		return nil
+	-- Otherwise the newest year that has the menu.
+	local Best
+
+	for _, Folder in ipairs(Core:GetChildren()) do
+		if
+			HasMenu(Folder)
+			and (not Best or (tonumber(Folder.Name) or 0) > (tonumber(Best.Name) or 0))
+		then
+			Best = Folder
+		end
 	end
 
-	local Success, Result = pcall(Suite.require, Module)
-
-	if not Success then
-		warn("[2019 menu] SettingsHub could not be loaded:", Result)
-		return nil
-	end
-
-	return Result
+	return Best
 
 end)()
 
---============================================================*
--- HIDE EVERYTHING EXCEPT THE MENU
---============================================================*
-
--- Things the 2019 GUI made, outside the menu: top bar, chat, player
--- list, backpack, loading screen and so on.
-
-local IsNew = function(Object)
-	return not Existing[Object]
-		and Object.Name ~= "Legacy2019MenuIcon"
-		and Object ~= Legacy
+if not Client then
+	warn("[2019 menu] no escape menu found in the Legacy model")
+	return
 end
 
-local NewRoots = function()
+local LegacyGui = Client:FindFirstChild(GUI_NAME)
 
-	local Roots = {}
+local Modules = LegacyGui.Modules
 
-	for _, Root in ipairs(GuiRoots) do
-		for _, Child in ipairs(Root:GetChildren()) do
-			if IsNew(Child) then
-				table.insert(Roots, Child)
+local SettingsHubModule = Modules.Settings.SettingsHub
+
+--============================================================*
+-- WHAT THE MENU NEEDS
+--============================================================*
+
+-- A few values in Lighting and modules in ReplicatedStorage
+-- (the same thing Legacy:CreateUtilities() does).
+
+local Utility = Legacy:FindFirstChild("Utility")
+
+if Utility then
+
+	for _, ServiceFolder in ipairs(Utility:GetChildren()) do
+
+		local Success, Service = pcall(game.GetService, game, ServiceFolder.Name)
+
+		if Success and Service then
+			for _, Object in ipairs(ServiceFolder:GetChildren()) do
+				Object.Parent = Service
 			end
 		end
-	end
 
-	if
-		typeof(LegacyGui) == "Instance"
-		and IsNew(LegacyGui)
-		and not table.find(GuiRoots, LegacyGui)
-		and not table.find(Roots, LegacyGui)
-	then
-		table.insert(Roots, LegacyGui)
 	end
-
-	return Roots
 
 end
 
--- The 2019 menu frame. Only one made by Legacy counts; the modern
--- RobloxGui has a frame with the same name.
+-- The menu calls into the 2019 chat, player list and backpack. Give
+-- it stand-ins so those are never loaded: they would build their own
+-- windows and take over chat and hotbar keys from the modern UI.
 
-local FindMenu = function()
+local SuiteModules = getgenv and getgenv().__rbxm_suite_modules
 
-	if SettingsHub and typeof(SettingsHub.ClippingShield) == "Instance" then
-		return SettingsHub.ClippingShield
-	end
+local NoOp = function() end
 
-	for _, Root in ipairs(NewRoots()) do
-
-		if Root.Name == "SettingsClippingShield" then
-			return Root
-		end
-
-		local Found = Root:FindFirstChild("SettingsClippingShield", true)
-
-		if Found then
-			return Found
-		end
-
-	end
-
-	return nil
-
+local StandIn = function(Members)
+	return setmetatable(Members, {
+		__index = function()
+			return NoOp
+		end,
+	})
 end
 
-local Menu
+local Replace = function(Name, Value)
 
-do
-	local StartTime = os.clock()
+	local Module = Modules:FindFirstChild(Name)
 
-	repeat
-		Menu = FindMenu()
-		if not Menu then
-			task.wait(0.1)
-		end
-	until Menu or os.clock() - StartTime > 10
-
-	if not Menu then
-		warn("[2019 menu] the 2019 menu frame was not found; hiding all of the 2019 GUI")
-	end
-end
-
-local Lock = function(Object, Property, Value)
-
-	pcall(function()
-		Object[Property] = Value
-	end)
-
-	Object:GetPropertyChangedSignal(Property):Connect(function()
-		if Object[Property] ~= Value then
-			Object[Property] = Value
-		end
-	end)
-
-end
-
-local Handled = {}
-
-local Hide
-
-Hide = function(Object)
-
-	if Handled[Object] or Object.Name == "Legacy2019MenuIcon" then
+	if not Module then
 		return
 	end
 
-	Handled[Object] = true
+	local Record = SuiteModules and SuiteModules[Module]
 
-	-- The menu and everything in it stays as it is.
-	if Menu and (Object == Menu or Object:IsDescendantOf(Menu)) then
-		return
-	end
-
-	-- A frame or screen that holds the menu stays visible, but its
-	-- other children are hidden.
-	if Menu and Menu:IsDescendantOf(Object) then
-
-		for _, Child in ipairs(Object:GetChildren()) do
-			Hide(Child)
-		end
-
-		Object.ChildAdded:Connect(Hide)
-
-		return
-
-	end
-
-	if Object:IsA("LayerCollector") then
-
-		Lock(Object, "Enabled", false)
-
-	elseif Object:IsA("GuiObject") then
-
-		Lock(Object, "Visible", false)
-
-	elseif Object:IsA("Folder") or Object:IsA("Configuration") then
-
-		for _, Child in ipairs(Object:GetChildren()) do
-			Hide(Child)
-		end
-
-		Object.ChildAdded:Connect(Hide)
-
+	if Record then
+		Record.data = Value
+		Record.isLoaded = true
+	else
+		warn("[2019 menu] could not replace the 2019 " .. Name .. "; it may show up")
 	end
 
 end
 
-for _, Root in ipairs(NewRoots()) do
-	Hide(Root)
-end
+Replace("Chat", StandIn({
+	GetVisibility = function()
+		return false
+	end,
+}))
 
--- Keep catching 2019 pieces that appear shortly after start-up,
--- then stop so later modern prompts are left alone.
+Replace("PlayerlistModule", StandIn({}))
 
-for _, Child in ipairs(Created) do
-	if Child.Parent and IsNew(Child) then
-		Hide(Child)
-	end
-end
-
-task.delay(5, function()
-	Watching = false
-	for _, Watcher in ipairs(Watchers) do
-		Watcher:Disconnect()
-	end
-end)
-
-for _, Root in ipairs(GuiRoots) do
-	local Connection
-	Connection = Root.ChildAdded:Connect(function(Child)
-		if Watching then
-			Hide(Child)
-		else
-			Connection:Disconnect()
-		end
-	end)
-end
+Replace("BackpackScript", StandIn({
+	IsOpen = false,
+}))
 
 --============================================================*
--- RESTORE THE MODERN UI
+-- INSTALL THE GUI
 --============================================================*
 
-local Restore = function()
+-- The model ships a few loose frames (zoom buttons, a backdrop) that
+-- are not part of the menu. Everything the menu creates is added
+-- later and left alone.
 
-	pcall(function()
-		RobloxGui.Enabled = true
-	end)
-
-	for Type, Enabled in pairs(CoreGuiState) do
-		pcall(StarterGui.SetCoreGuiEnabled, StarterGui, Type, Enabled)
+for _, Child in ipairs(LegacyGui:GetChildren()) do
+	if Child:IsA("GuiObject") then
+		Lock(Child, "Visible", false)
 	end
+end
 
-	for Gui, Enabled in pairs(ModernScreenGuis) do
-		if Gui.Parent then
+-- A NewRobloxGui left over from an older Legacy script would be found
+-- first by name. Move it out of the way.
+
+for _, Child in ipairs(CoreGui:GetChildren()) do
+	if Child.Name == GUI_NAME then
+		warn("[2019 menu] an older Legacy GUI is still running; rejoin for a clean start")
+		Child.Name = GUI_NAME .. "Old"
+		if Child:IsA("ScreenGui") then
 			pcall(function()
-				Gui.Enabled = Enabled
+				Child.Enabled = false
 			end)
 		end
 	end
-
 end
 
--- Legacy may switch things off a moment after :Start() returns.
+LegacyGui.ResetOnSpawn = false
 
-task.spawn(function()
-	for _ = 1, 6 do
-		Restore()
-		task.wait(0.5)
-	end
-end)
+-- Above the modern UI while the menu is open.
+LegacyGui.DisplayOrder = 100000
+
+LegacyGui.Parent = CoreGui
 
 --============================================================*
--- OPEN THE MENU
+-- LOAD THE MENU
 --============================================================*
 
-local FindShield = function()
-	return Menu and Menu:FindFirstChild("SettingsShield", true)
+local Loaded, Hub = pcall(Suite.require, SettingsHubModule)
+
+if not Loaded or type(Hub) ~= "table" then
+	warn("[2019 menu] the 2019 escape menu failed to load:", Hub)
+	LegacyGui:Destroy()
+	return
 end
+
+-- The menu binds F9 to the dev console; Roblox already does that.
+pcall(ContextActionService.UnbindAction, ContextActionService, "Open Dev Console")
 
 local ToggleMenu = function()
 
-	if SettingsHub then
-
-		local Success = pcall(function()
-			if SettingsHub.ToggleVisibility then
-				SettingsHub:ToggleVisibility()
-			else
-				SettingsHub:SetVisibility(not SettingsHub.Visible)
-			end
-		end)
-
-		if Success then
-			return
+	local Success, Result = pcall(function()
+		if Hub.ToggleVisibility then
+			Hub:ToggleVisibility()
+		else
+			Hub:SetVisibility(not Hub:GetVisibility())
 		end
+	end)
 
-	end
-
-	-- Fallback: show the menu frame directly.
-	local Shield = FindShield()
-
-	if Shield then
-		Shield.Visible = not Shield.Visible
+	if not Success then
+		warn("[2019 menu] could not open the menu:", Result)
 	end
 
 end
@@ -413,9 +283,35 @@ end
 -- ROBLOX ICON
 --============================================================*
 --
--- An invisible button sits on top of the modern Roblox icon, so
--- clicking the icon opens the 2019 menu and the modern menu never
--- gets the click.
+-- An invisible button is put inside the modern Roblox icon. It sits
+-- on top of the icon, so a tap opens the 2019 menu and the modern
+-- menu never gets it.
+
+local IsShown = function(Object)
+
+	local Current = Object
+
+	while Current and Current ~= game do
+
+		if Current:IsA("GuiObject") and not Current.Visible then
+			return false
+		end
+
+		if Current:IsA("LayerCollector") then
+			return Current.Enabled
+		end
+
+		Current = Current.Parent
+
+	end
+
+	return false
+
+end
+
+local Area = function(Object)
+	return Object.AbsoluteSize.X * Object.AbsoluteSize.Y
+end
 
 local FindRobloxIcon = function()
 
@@ -425,91 +321,98 @@ local FindRobloxIcon = function()
 		return nil
 	end
 
-	local Best
+	local NamedButton, NamedObject, Leftmost
 
 	for _, Object in ipairs(TopBarApp:GetDescendants()) do
 
 		if
 			Object:IsA("GuiObject")
-			and Object.Name:lower():find("menuicon")
+			and Object.Name ~= BUTTON_NAME
 			and Object.AbsoluteSize.X > 0
 			and Object.AbsoluteSize.Y > 0
+			and IsShown(Object)
 		then
 
-			-- Prefer the largest visible piece of the icon.
-			if
-				not Best
-				or Object.AbsoluteSize.X * Object.AbsoluteSize.Y
-					> Best.AbsoluteSize.X * Best.AbsoluteSize.Y
-			then
-				Best = Object
+			-- The icon element is named like "MenuIcon".
+			local InMenuIcon = false
+			local Current = Object
+
+			while Current and Current ~= TopBarApp do
+				if Current.Name:lower():find("menuicon") then
+					InMenuIcon = true
+					break
+				end
+				Current = Current.Parent
+			end
+
+			if InMenuIcon then
+
+				if Object:IsA("GuiButton") then
+					if not NamedButton or Area(Object) > Area(NamedButton) then
+						NamedButton = Object
+					end
+				elseif not NamedObject or Area(Object) > Area(NamedObject) then
+					NamedObject = Object
+				end
+
+			elseif Object:IsA("GuiButton") then
+
+				-- Otherwise: the leftmost icon-sized button in the top bar.
+				local Size = Object.AbsoluteSize
+
+				if
+					Size.X >= 16 and Size.X <= 100
+					and Size.Y >= 16 and Size.Y <= 100
+					and (not Leftmost or Object.AbsolutePosition.X < Leftmost.AbsolutePosition.X)
+				then
+					Leftmost = Object
+				end
+
 			end
 
 		end
 
 	end
 
-	return Best
+	return NamedButton or NamedObject or Leftmost
 
 end
 
-local ProtectGui = (syn and syn.protect_gui) or protectgui
+local Button = Instance.new("TextButton")
+Button.Name = BUTTON_NAME
+Button.Text = ""
+Button.BackgroundTransparency = 1
+Button.AutoButtonColor = false
+Button.Selectable = false
+Button.Position = UDim2.fromScale(0, 0)
+Button.Size = UDim2.fromScale(1, 1)
+Button.ZIndex = 1000
 
-local IconGui = Instance.new("ScreenGui")
-IconGui.Name = "Legacy2019MenuIcon"
-IconGui.IgnoreGuiInset = true
-IconGui.ResetOnSpawn = false
-IconGui.DisplayOrder = 2147483647
-IconGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+table.insert(Connections, Button.Activated:Connect(ToggleMenu))
 
-if ProtectGui then
-	pcall(ProtectGui, IconGui)
-end
-
-local IconButton = Instance.new("TextButton")
-IconButton.Name = "RobloxIcon"
-IconButton.Text = ""
-IconButton.BackgroundTransparency = 1
-IconButton.AutoButtonColor = false
-IconButton.Selectable = false
--- Used until the real icon is found: the top-left icon slot.
-IconButton.Position = UDim2.fromOffset(12, 6)
-IconButton.Size = UDim2.fromOffset(44, 44)
-IconButton.Parent = IconGui
-
-IconGui.Parent = (gethui and gethui()) or CoreGui
-
-IconButton.Activated:Connect(ToggleMenu)
-
--- Keep the button lined up with the icon (it moves on resize and
--- when the top bar layout changes).
-
-local RobloxIcon
+-- The top bar can rebuild the icon (rotation, resize), so keep
+-- checking that the button is still on it.
 
 task.spawn(function()
 
-	while IconGui.Parent do
+	local StartTime = os.clock()
 
-		if not (RobloxIcon and RobloxIcon:IsDescendantOf(CoreGui)) then
-			RobloxIcon = FindRobloxIcon()
-		end
+	local Warned = false
 
-		if RobloxIcon then
+	while Running do
 
-			local TopBarGui = RobloxIcon:FindFirstAncestorOfClass("ScreenGui")
-			local Offset = Vector2.zero
+		local Parent = Button.Parent
 
-			-- AbsolutePosition is measured below the inset when the
-			-- top bar's ScreenGui doesn't ignore it.
-			if TopBarGui and not TopBarGui.IgnoreGuiInset then
-				Offset = GuiService:GetGuiInset()
+		if not (Parent and Parent:IsDescendantOf(CoreGui) and IsShown(Parent)) then
+
+			local Icon = FindRobloxIcon()
+
+			if Icon then
+				Button.Parent = Icon
+			elseif not Warned and os.clock() - StartTime > 15 then
+				Warned = true
+				warn("[2019 menu] could not find the Roblox icon in the top bar")
 			end
-
-			local Position = RobloxIcon.AbsolutePosition + Offset
-
-			IconButton.Position = UDim2.fromOffset(Position.X, Position.Y)
-			IconButton.Size = UDim2.fromOffset(RobloxIcon.AbsoluteSize.X, RobloxIcon.AbsoluteSize.Y)
-			IconButton.Visible = RobloxIcon.Visible and TopBarGui ~= nil and TopBarGui.Enabled
 
 		end
 
@@ -518,3 +421,29 @@ task.spawn(function()
 	end
 
 end)
+
+--============================================================*
+-- CLEAN-UP FOR THE NEXT RUN
+--============================================================*
+
+Environment().Legacy2019Menu = {
+	Stop = function()
+
+		Running = false
+
+		for _, Connection in ipairs(Connections) do
+			Connection:Disconnect()
+		end
+
+		pcall(function()
+			Hub:SetVisibility(false, true)
+		end)
+
+		pcall(ContextActionService.UnbindAction, ContextActionService, "RBXEscapeMainMenu")
+
+		Button:Destroy()
+
+		LegacyGui:Destroy()
+
+	end,
+}
