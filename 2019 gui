@@ -580,9 +580,11 @@ end)
 -- CLOSE BUTTON
 --============================================================*
 --
--- While the 2019 menu is open it covers the top bar, so a white X is
--- drawn above it, exactly over the Roblox icon. Tapping it closes the
--- menu, like the 2023 top bar.
+-- While the 2019 menu is open it covers the top bar, so the X image
+-- (a white rounded square with an X) is drawn above it, exactly over
+-- the Roblox icon. Tapping it closes the menu, like the 2023 top bar.
+
+local CLOSE_IMAGE = "rbxthumb://type=Asset&id=73899106811349&w=150&h=150"
 
 local RunService = game:GetService("RunService")
 
@@ -601,38 +603,15 @@ Origin.BackgroundTransparency = 1
 Origin.Size = UDim2.fromScale(1, 1)
 Origin.Parent = CloseGui
 
-local CloseButton = Instance.new("TextButton")
+local CloseButton = Instance.new("ImageButton")
 CloseButton.Name = "Close"
-CloseButton.Text = ""
+CloseButton.Image = CLOSE_IMAGE
+CloseButton.ScaleType = Enum.ScaleType.Fit
 CloseButton.AutoButtonColor = false
-CloseButton.BackgroundColor3 = Color3.new(1, 1, 1)
+CloseButton.BackgroundTransparency = 1
 CloseButton.BorderSizePixel = 0
 CloseButton.Visible = false
 CloseButton.Parent = CloseGui
-
-local CLOSE_CORNER = UDim.new(0.18, 0)
-
-local CloseCorner = Instance.new("UICorner")
-CloseCorner.CornerRadius = CLOSE_CORNER
-CloseCorner.Parent = CloseButton
-
-for _, Angle in ipairs({ 45, -45 }) do
-
-	local Stroke = Instance.new("Frame")
-	Stroke.Name = "Stroke"
-	Stroke.AnchorPoint = Vector2.new(0.5, 0.5)
-	Stroke.Position = UDim2.fromScale(0.5, 0.5)
-	Stroke.Size = UDim2.fromScale(0.55, 0.07)
-	Stroke.Rotation = Angle
-	Stroke.BackgroundColor3 = Color3.fromRGB(57, 59, 61)
-	Stroke.BorderSizePixel = 0
-	Stroke.Parent = CloseButton
-
-	local Round = Instance.new("UICorner")
-	Round.CornerRadius = UDim.new(1, 0)
-	Round.Parent = Stroke
-
-end
 
 table.insert(Connections, CloseButton.Activated:Connect(function()
 	pcall(function()
@@ -657,10 +636,6 @@ table.insert(Connections, RunService.RenderStepped:Connect(function()
 	)
 
 	CloseButton.Size = UDim2.fromOffset(Icon.AbsoluteSize.X, Icon.AbsoluteSize.Y)
-
-	-- Match the icon's shape (round on the newest top bar).
-	local IconCorner = Icon:FindFirstChildOfClass("UICorner")
-	CloseCorner.CornerRadius = IconCorner and IconCorner.CornerRadius or CLOSE_CORNER
 
 	CloseButton.Visible = true
 
