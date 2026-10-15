@@ -698,6 +698,57 @@ if Settings.Year >= 2017 then
 
 end
 
+-- Module / 2017 Chat
+--
+-- Legacy_2019.rbxm ships its own copy of the chat window. The 2017
+-- chat window from Legacy2017.rbxm is used instead. Only the Chat
+-- module is taken from it; its scripts are not run. Loaded before the
+-- 2019 model so nothing yields between installing it and :Start().
+
+local Chat2017 = (function()
+
+	local Success, Result = pcall(function()
+
+		local Model = Suite.launch(
+			Suite.download(
+				"letsafe/something@v1.0.0",
+				"Legacy2017.rbxm"
+			),
+			{
+				runscripts = false,
+				debug = true,
+			}
+		)
+
+		local Core = Model and Model:FindFirstChild("Core")
+		local Client = Core and Core:FindFirstChild(tostring(Settings.Year))
+		local Gui = Client and Client:FindFirstChild("NewRobloxGui")
+		local Modules = Gui and Gui:FindFirstChild("Modules")
+		local Chat = Modules and Modules:FindFirstChild("Chat")
+
+		if not (Chat and Chat:IsA("ModuleScript")) then
+			error(`no Chat module for {Settings.Year}`)
+		end
+
+		-- Some executors can't compile Luau type annotations.
+		local Compiled, CompileError = loadstring(Chat.Source)
+
+		if not Compiled then
+			error(CompileError)
+		end
+
+		return Chat
+
+	end)
+
+	if Success then
+		return Result
+	end
+
+	warn("[Legacy] 2017 chat unavailable, keeping the 2019 chat:", Result)
+
+end)()
+
 -- Module / Legacy
 
 local Legacy = (function()
@@ -737,6 +788,28 @@ local Legacy = (function()
 	)
 
 end)()
+
+-- Swap in the 2017 chat. Modules load the first time they are
+-- required, which happens during :Start(), so replacing it here is
+-- enough for the topbar and settings menu to pick it up.
+
+if Chat2017 then
+
+	pcall(function()
+
+		local Client = Legacy.Core:FindFirstChild(tostring(Settings.Year))
+		local Modules = Client.NewRobloxGui.Modules
+		local Chat2019 = Modules:FindFirstChild("Chat")
+
+		Chat2017.Parent = Modules
+
+		if Chat2019 then
+			Chat2019:Destroy()
+		end
+
+	end)
+
+end
 
 -- Setup
 
