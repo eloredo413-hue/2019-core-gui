@@ -40,6 +40,8 @@ local GUI_NAME = "NewRobloxGui"
 
 local BUTTON_NAME = "Legacy2019MenuButton"
 
+local CLOSE_NAME = "Legacy2019MenuClose"
+
 -- Stop a previous run of this script first, so two menus never
 -- fight over the Roblox icon.
 
@@ -368,6 +370,7 @@ local FindRobloxIcon = function()
 		if
 			Object:IsA("GuiObject")
 			and Object.Name ~= BUTTON_NAME
+			and Object.Name ~= CLOSE_NAME
 			and Object.AbsoluteSize.X > 0
 			and Object.AbsoluteSize.Y > 0
 			and IsShown(Object)
@@ -580,38 +583,98 @@ end)
 -- CLOSE BUTTON
 --============================================================*
 --
--- While the 2019 menu is open it covers the top bar, so the X image
--- (a white rounded square with an X) is drawn above it, exactly over
--- the Roblox icon. Tapping it closes the menu, like the 2023 top bar.
+-- While the 2019 menu is open, the Roblox icon shows the X image (a
+-- white rounded square with an X). Tapping it closes the menu, like
+-- the 2023 top bar.
 
-local CLOSE_IMAGE = "rbxthumb://type=Asset&id=73899106811349&w=150&h=150"
+local CLOSE_IMAGE_ID = "73899106811349"
+
+-- Tried in order until one loads: the asset's thumbnail (works for
+-- decals and images), then the id as an image.
+local CLOSE_IMAGES = {
+	"rbxthumb://type=Asset&id=" .. CLOSE_IMAGE_ID .. "&w=150&h=150",
+	"rbxassetid://" .. CLOSE_IMAGE_ID,
+}
 
 local RunService = game:GetService("RunService")
 
-local CloseGui = Instance.new("ScreenGui")
-CloseGui.Name = "Legacy2019MenuClose"
-CloseGui.IgnoreGuiInset = true
-CloseGui.ResetOnSpawn = false
-CloseGui.DisplayOrder = LegacyGui.DisplayOrder + 1
-CloseGui.Parent = CoreGui
-
--- A full-screen frame at (0, 0). Its AbsolutePosition turns the icon's
--- on-screen position into a position inside this GUI.
-local Origin = Instance.new("Frame")
-Origin.Name = "Origin"
-Origin.BackgroundTransparency = 1
-Origin.Size = UDim2.fromScale(1, 1)
-Origin.Parent = CloseGui
-
+-- It lives inside the Roblox icon (like the invisible tap button), so
+-- it always draws on top of the logo and moves with it.
 local CloseButton = Instance.new("ImageButton")
-CloseButton.Name = "Close"
-CloseButton.Image = CLOSE_IMAGE
+CloseButton.Name = CLOSE_NAME
+CloseButton.Image = ""
 CloseButton.ScaleType = Enum.ScaleType.Fit
 CloseButton.AutoButtonColor = false
 CloseButton.BackgroundTransparency = 1
 CloseButton.BorderSizePixel = 0
+CloseButton.Position = UDim2.fromScale(0, 0)
+CloseButton.Size = UDim2.fromScale(1, 1)
+CloseButton.ZIndex = Button.ZIndex + 1
 CloseButton.Visible = false
-CloseButton.Parent = CloseGui
+
+-- A drawn X (white rounded square, dark X), shown only until the
+-- image has loaded, or for good if it never does, so the button is
+-- never invisible.
+local Fallback = Instance.new("Frame")
+Fallback.Name = "Fallback"
+Fallback.Size = UDim2.fromScale(1, 1)
+Fallback.BackgroundColor3 = Color3.new(1, 1, 1)
+Fallback.BorderSizePixel = 0
+Fallback.Active = false
+Fallback.Parent = CloseButton
+
+local FallbackCorner = Instance.new("UICorner")
+FallbackCorner.CornerRadius = UDim.new(0.18, 0)
+FallbackCorner.Parent = Fallback
+
+for _, Angle in ipairs({ 45, -45 }) do
+
+	local Stroke = Instance.new("Frame")
+	Stroke.Name = "Stroke"
+	Stroke.AnchorPoint = Vector2.new(0.5, 0.5)
+	Stroke.Position = UDim2.fromScale(0.5, 0.5)
+	Stroke.Size = UDim2.fromScale(0.55, 0.07)
+	Stroke.Rotation = Angle
+	Stroke.BackgroundColor3 = Color3.fromRGB(57, 59, 61)
+	Stroke.BorderSizePixel = 0
+	Stroke.Active = false
+	Stroke.Parent = Fallback
+
+	local Round = Instance.new("UICorner")
+	Round.CornerRadius = UDim.new(1, 0)
+	Round.Parent = Stroke
+
+end
+
+task.spawn(function()
+
+	local ContentProvider = game:GetService("ContentProvider")
+
+	for _, Image in ipairs(CLOSE_IMAGES) do
+
+		local Status
+
+		pcall(function()
+			ContentProvider:PreloadAsync({ Image }, function(_, FetchStatus)
+				Status = FetchStatus
+			end)
+		end)
+
+		if not Running then
+			return
+		end
+
+		if Status == Enum.AssetFetchStatus.Success then
+			CloseButton.Image = Image
+			Fallback.Visible = false
+			return
+		end
+
+	end
+
+	warn("[2019 menu] the X image (asset " .. CLOSE_IMAGE_ID .. ") did not load; showing a drawn X instead")
+
+end)
 
 table.insert(Connections, CloseButton.Activated:Connect(function()
 	pcall(function()
@@ -621,23 +684,14 @@ end))
 
 table.insert(Connections, RunService.RenderStepped:Connect(function()
 
+	-- Follow the tap button onto the icon (the top bar can rebuild it).
 	local Icon = Button.Parent
 
-	if not (IsOpen() and Icon and Icon:IsA("GuiObject") and Icon:IsDescendantOf(CoreGui)) then
-		CloseButton.Visible = false
-		return
+	if Icon and CloseButton.Parent ~= Icon then
+		CloseButton.Parent = Icon
 	end
 
-	local Offset = Origin.AbsolutePosition
-
-	CloseButton.Position = UDim2.fromOffset(
-		Icon.AbsolutePosition.X - Offset.X,
-		Icon.AbsolutePosition.Y - Offset.Y
-	)
-
-	CloseButton.Size = UDim2.fromOffset(Icon.AbsoluteSize.X, Icon.AbsoluteSize.Y)
-
-	CloseButton.Visible = true
+	CloseButton.Visible = IsOpen() and Icon ~= nil
 
 end))
 
@@ -662,7 +716,7 @@ Environment().Legacy2019Menu = {
 
 		Button:Destroy()
 
-		CloseGui:Destroy()
+		CloseButton:Destroy()
 
 		LegacyGui:Destroy()
 
