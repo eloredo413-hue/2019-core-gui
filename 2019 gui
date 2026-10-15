@@ -263,6 +263,43 @@ end
 -- The menu binds F9 to the dev console; Roblox already does that.
 pcall(ContextActionService.UnbindAction, ContextActionService, "Open Dev Console")
 
+-- Dropdown buttons (e.g. "Which Player?" and "Type Of Abuse" on the
+-- report tab) turn blue when pressed and stay blue: the menu makes
+-- them unselectable while the list is open, which skips the code that
+-- turns them grey again. Reset them whenever a list closes.
+
+local GuiService = game:GetService("GuiService")
+
+local DROPDOWN_IMAGE = "rbxasset://textures/ui/Settings/MenuBarAssets/MenuButton.png"
+
+local ResetDropDowns = function()
+	for _, Object in ipairs(LegacyGui:GetDescendants()) do
+		if
+			Object.Name == "DropDownFrame"
+			and Object:IsA("ImageButton")
+			and GuiService.SelectedObject ~= Object
+		then
+			Object.Image = DROPDOWN_IMAGE
+		end
+	end
+end
+
+local WatchDropDownList = function(Object)
+	if Object.Name == "DropDownFullscreenFrame" and Object:IsA("GuiObject") then
+		table.insert(Connections, Object:GetPropertyChangedSignal("Visible"):Connect(function()
+			if not Object.Visible then
+				ResetDropDowns()
+			end
+		end))
+	end
+end
+
+for _, Child in ipairs(LegacyGui:GetChildren()) do
+	WatchDropDownList(Child)
+end
+
+table.insert(Connections, LegacyGui.ChildAdded:Connect(WatchDropDownList))
+
 local ToggleMenu = function()
 
 	local Success, Result = pcall(function()
