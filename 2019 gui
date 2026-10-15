@@ -3735,6 +3735,91 @@ task.spawn(function()
 
 	end
 
+	-- Follow the chat itself when possible. Guessing from presses on
+	-- the button drifts: a press that starts on the button's padding
+	-- or slides off it, or a tap held past the toggle debounce, flips
+	-- the icon without the chat opening or closing, leaving it white
+	-- while the chat is open. The chat module knows whether its window
+	-- is shown and whether its bar is focused, so read that instead.
+	local ChatModule
+
+	pcall(function()
+
+		local NewRobloxGui = CoreGui:FindFirstChild("NewRobloxGui")
+		local Modules = NewRobloxGui and NewRobloxGui:FindFirstChild("Modules")
+		local ChatScript = Modules and Modules:FindFirstChild("Chat")
+
+		if ChatScript then
+
+			local Result = Suite.require(ChatScript)
+
+			if typeof(Result) == "table" and Result.GetVisibility then
+				ChatModule = Result
+			end
+
+		end
+
+	end)
+
+	if ChatModule then
+
+		local Sync = function(Source)
+
+			local Success, IsOpen = pcall(function()
+
+				local Focused = false
+
+				pcall(function()
+					Focused = ChatModule:IsFocused() == true
+				end)
+
+				return ChatModule:GetVisibility() == true or Focused
+
+			end)
+
+			if Success then
+				SetState(IsOpen, Source)
+			end
+
+		end
+
+		for _, Name in ipairs({ "VisibilityStateChanged", "ChatBarFocusChanged" }) do
+
+			local Signal = ChatModule[Name]
+
+			if Signal then
+
+				pcall(function()
+					Signal:connect(function()
+						task.defer(Sync, Name)
+					end)
+				end)
+
+			end
+
+		end
+
+		Sync("init")
+
+		-- In case a change happens without a signal.
+		task.spawn(function()
+
+			while Icon.Parent do
+
+				Sync("poll")
+
+				task.wait(0.2)
+
+			end
+
+		end)
+
+		return
+
+	end
+
+	warn("[Legacy chat icon] chat module not found, guessing state from clicks")
+
 	for _, Object in ipairs(Chat:GetDescendants()) do
 
 		if Object:IsA("GuiButton") then
