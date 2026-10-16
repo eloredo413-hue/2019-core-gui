@@ -881,6 +881,26 @@ table.insert(Connections, UserInputService.InputEnded:Connect(function(Input)
 	end
 end))
 
+-- The confirmation pages (Leave / Reset) select their first button when they
+-- open, which paints it blue and keeps it blue. A touch screen has no use for a
+-- selected button: drop the selection the moment it is made.
+local ClearTouchSelection = function()
+
+	if
+		UserInputService.TouchEnabled
+		and not UserInputService.MouseEnabled
+		and ButtonGuiService.SelectedObject
+		and ButtonGuiService.SelectedObject:IsDescendantOf(LegacyGui)
+	then
+		ButtonGuiService.SelectedObject = nil
+	end
+
+end
+
+table.insert(Connections, ButtonGuiService:GetPropertyChangedSignal("SelectedObject"):Connect(function()
+	task.defer(ClearTouchSelection)
+end))
+
 task.spawn(function()
 
 	local BlueSince = {}
@@ -931,7 +951,7 @@ end)
 -- CLEAN-UP FOR THE NEXT RUN
 --============================================================*
 
-Environment().Legacy2019MenuVersion = "2019-gui-r8"
+Environment().Legacy2019MenuVersion = "2019-gui-r9"
 
 Environment().Legacy2019Menu = {
 	-- One line saying what the menu is doing. The loader shows it on screen,
@@ -986,4 +1006,4 @@ Environment().Legacy2019Menu = {
 	end,
 }
 
--- end of 2019 gui (2019-gui-r8)
+-- end of 2019 gui (2019-gui-r9)
