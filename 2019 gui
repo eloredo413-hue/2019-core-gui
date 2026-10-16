@@ -312,27 +312,32 @@ table.insert(Connections, LegacyGui.ChildAdded:Connect(WatchDropDownList))
 --============================================================*
 --
 -- The menu's dark shield only fills the safe area: below the top bar
--- and between the camera cut-out and the screen edges. Like the 2023
--- menu, make the whole gui full-screen so the shield darkens
--- everything, and keep the menu itself inside the same margins with
--- padding so nothing moves.
+-- and between the camera cut-out and the screen edges. The menu lays
+-- itself out from that area (its size decides the page height, its
+-- middle decides where the page goes), so the menu is left exactly as
+-- it is. The same dark layer is drawn behind it across the whole
+-- screen, like the 2023 menu. It follows the shield's slide in and out,
+-- and the shield's own dark is switched off so the two never add up.
 
-local MakeGui = function(Name, Order, FullScreen)
+local RunService = game:GetService("RunService")
+
+local MakeGui = function(Name, Order)
 
 	local Gui = Instance.new("ScreenGui")
 	Gui.Name = Name
 	Gui.ResetOnSpawn = false
 	Gui.DisplayOrder = Order
 
-	if FullScreen then
-		Gui.IgnoreGuiInset = true
-		pcall(function()
-			Gui.ScreenInsets = Enum.ScreenInsets.None
-		end)
-		pcall(function()
-			Gui.SafeAreaCompatibility = Enum.SafeAreaCompatibility.None
-		end)
-	end
+	-- Same set-up as the 2023 menu's gui: the whole screen, no margins.
+	Gui.IgnoreGuiInset = true
+
+	pcall(function()
+		Gui.ScreenInsets = Enum.ScreenInsets.None
+	end)
+
+	pcall(function()
+		Gui.SafeAreaCompatibility = Enum.SafeAreaCompatibility.None
+	end)
 
 	Gui.Parent = CoreGui
 
@@ -340,125 +345,71 @@ local MakeGui = function(Name, Order, FullScreen)
 
 end
 
-local Probes = {} -- everything created below, for Stop
+local BackdropGui = MakeGui("Legacy2019Backdrop", LegacyGui.DisplayOrder - 1)
 
-local FullScreenDone = false
+local Backdrop = Instance.new("Frame")
+Backdrop.Name = "Dark"
+Backdrop.BorderSizePixel = 0
+Backdrop.Size = UDim2.fromScale(1, 1)
+Backdrop.BackgroundColor3 = Color3.new(41 / 255, 41 / 255, 41 / 255)
+Backdrop.BackgroundTransparency = 0.2
+-- Like the shield, it keeps taps away from what is behind it.
+Backdrop.Active = true
+Backdrop.Visible = false
+Backdrop.Parent = BackdropGui
 
-task.spawn(function()
+do
 
-	-- The shield is created by the menu: SettingsShield (clips) > SettingsShield.
+	-- SettingsShield (clips) > SettingsShield (the dark sheet that slides).
 	local Clipping = LegacyGui:FindFirstChild("SettingsShield")
 	local Shield = Clipping and Clipping:FindFirstChild("SettingsShield")
 
-	if not Shield then
-		warn("[2019 menu] shield not found; the dark background keeps its old size")
-		return
-	end
+	if Shield then
 
-	-- A gui with the insets the menu has now, next to one without any:
-	-- the difference between them is the margin around the menu.
-	local OriginGui = MakeGui("Legacy2019OriginProbe", -100, true)
-	local OriginFrame = Instance.new("Frame")
-	OriginFrame.BackgroundTransparency = 1
-	OriginFrame.BorderSizePixel = 0
-	OriginFrame.Size = UDim2.fromOffset(0, 0)
-	OriginFrame.Parent = OriginGui
+		Backdrop.BackgroundColor3 = Shield.BackgroundColor3
 
-	local AreaGui = MakeGui("Legacy2019InsetProbe", -100, false)
-	pcall(function()
-		AreaGui.IgnoreGuiInset = LegacyGui.IgnoreGuiInset
-	end)
-	pcall(function()
-		AreaGui.ScreenInsets = LegacyGui.ScreenInsets
-	end)
-	local AreaFrame = Instance.new("Frame")
-	AreaFrame.BackgroundTransparency = 1
-	AreaFrame.BorderSizePixel = 0
-	AreaFrame.Size = UDim2.fromScale(1, 1)
-	AreaFrame.Parent = AreaGui
-
-	table.insert(Probes, OriginGui)
-	table.insert(Probes, AreaGui)
-
-	local Padding = Instance.new("UIPadding")
-	Padding.Name = "Legacy2019InsetPadding"
-
-	local Measure = function()
-
-		local Success, Left, Top, Right, Bottom = pcall(function()
-			local Origin = OriginFrame.AbsolutePosition
-			local Position = AreaFrame.AbsolutePosition
-			local Size = AreaFrame.AbsoluteSize
-			local Full = OriginGui.AbsoluteSize
-			return
-				Position.X - Origin.X,
-				Position.Y - Origin.Y,
-				(Origin.X + Full.X) - (Position.X + Size.X),
-				(Origin.Y + Full.Y) - (Position.Y + Size.Y)
-		end)
-
-		if not Success then
-			return false
+		if Shield.BackgroundTransparency < 1 then
+			Backdrop.BackgroundTransparency = Shield.BackgroundTransparency
 		end
 
-		-- (A negative margin just means "none".)
-		for _, Value in ipairs({ Left, Top, Right, Bottom }) do
-			if type(Value) ~= "number" or Value < -100 or Value > 200 then
-				return false
+		Lock(Shield, "BackgroundTransparency", 1)
+
+		table.insert(Connections, RunService.RenderStepped:Connect(function()
+
+			local Show = Shield.Visible
+
+			if Backdrop.Visible ~= Show then
+				Backdrop.Visible = Show
 			end
-		end
 
-		-- Not laid out yet.
-		if OriginGui.AbsoluteSize.X <= 0 then
-			return false
-		end
+			if Show then
 
-		Padding.PaddingLeft = UDim.new(0, math.max(0, math.floor(Left + 0.5)))
-		Padding.PaddingTop = UDim.new(0, math.max(0, math.floor(Top + 0.5)))
-		Padding.PaddingRight = UDim.new(0, math.max(0, math.floor(Right + 0.5)))
-		Padding.PaddingBottom = UDim.new(0, math.max(0, math.floor(Bottom + 0.5)))
+				-- How far the sheet is above its resting place (0 when open),
+				-- and how far above it starts (its own height plus the
+				-- 36 the menu adds). The dark layer is taller than the sheet,
+				-- so it is moved by the same share of its own height.
+				local Success, Offset, Distance = pcall(function()
+					return Shield.AbsolutePosition.Y - Clipping.AbsolutePosition.Y, Clipping.AbsoluteSize.Y + 36
+				end)
 
-		return true
+				if Success then
+					local Share = math.clamp(-math.min(0, Offset) / math.max(Distance, 1), 0, 1)
+					Backdrop.Position = UDim2.fromOffset(0, -math.floor(Share * BackdropGui.AbsoluteSize.Y + 0.5))
+				end
+
+			end
+
+		end))
+
+	else
+
+		-- Without the shield there is nothing to follow: stay hidden and
+		-- leave the menu as it was.
+		warn("[2019 menu] shield not found; the dark background keeps its old size")
 
 	end
 
-	-- Freshly created frames report no position for a moment.
-	local Tries = 0
-
-	while Running and not Measure() do
-		Tries += 1
-		if Tries > 40 then
-			warn("[2019 menu] could not measure the screen margins; the dark background keeps its old size")
-			return
-		end
-		task.wait(0.1)
-	end
-
-	if not Running then
-		return
-	end
-
-	Padding.Parent = Shield
-
-	LegacyGui.IgnoreGuiInset = true
-
-	pcall(function()
-		LegacyGui.ScreenInsets = Enum.ScreenInsets.None
-	end)
-
-	pcall(function()
-		LegacyGui.SafeAreaCompatibility = Enum.SafeAreaCompatibility.None
-	end)
-
-	FullScreenDone = true
-
-	-- The margins change when the phone rotates.
-	while Running do
-		task.wait(0.5)
-		Measure()
-	end
-
-end)
+end
 
 local ToggleMenu = function()
 
@@ -747,15 +698,17 @@ end)
 -- Sprite sheet region and size the 2023 menu uses for its X.
 local CLOSE_IMAGE = "rbxassetid://136616213304711"
 
+-- Roblox's own close icon (white square with the X cut out): used for good
+-- if the sprite sheet cannot be loaded, so the button is never blank.
+local CLOSE_IMAGE_FALLBACK = "rbxasset://textures/ui/TopBar/close.png"
+
 local CLOSE_RECT_OFFSET = Vector2.new(135, 86)
 
 local CLOSE_RECT_SIZE = Vector2.new(36, 36)
 
 local CLOSE_SIZE = 30
 
-local RunService = game:GetService("RunService")
-
-local CloseGui = MakeGui("Legacy2019MenuCloseGui", LegacyGui.DisplayOrder + 1, true)
+local CloseGui = MakeGui("Legacy2019MenuCloseGui", LegacyGui.DisplayOrder + 1)
 
 -- (0, 0) of the screen, whatever the engine adds to AbsolutePosition.
 local CloseOrigin = Instance.new("Frame")
@@ -791,6 +744,25 @@ table.insert(Connections, CloseButton.Activated:Connect(function()
 		Hub:SetVisibility(false)
 	end)
 end))
+
+task.spawn(function()
+
+	local Status
+
+	pcall(function()
+		game:GetService("ContentProvider"):PreloadAsync({ CLOSE_IMAGE }, function(_, FetchStatus)
+			Status = FetchStatus
+		end)
+	end)
+
+	if Running and Status ~= Enum.AssetFetchStatus.Success then
+		warn("[2019 menu] the 2023 X image did not load; using Roblox's own close icon")
+		CloseButton.Image = CLOSE_IMAGE_FALLBACK
+		CloseButton.ImageRectOffset = Vector2.new(0, 0)
+		CloseButton.ImageRectSize = Vector2.new(0, 0)
+	end
+
+end)
 
 -- The Roblox icon keeps its own background and logo while the menu is
 -- open; hide them while the X is shown, and put them back afterwards.
@@ -876,6 +848,8 @@ end))
 -- CLEAN-UP FOR THE NEXT RUN
 --============================================================*
 
+Environment().Legacy2019MenuVersion = "2019-gui-r6"
+
 Environment().Legacy2019Menu = {
 	Stop = function()
 
@@ -897,11 +871,7 @@ Environment().Legacy2019Menu = {
 
 		CloseGui:Destroy()
 
-		for _, Probe in ipairs(Probes) do
-			pcall(function()
-				Probe:Destroy()
-			end)
-		end
+		BackdropGui:Destroy()
 
 		LegacyGui:Destroy()
 
