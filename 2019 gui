@@ -8,8 +8,10 @@
 	    opens and closes the 2019 menu instead of the modern one
 	  * the phone's back button and Escape open it too (the modern
 	    menu they would open is closed again straight away)
-	  * while it is open, the Roblox icon shows as a white X that
-	    closes it
+	  * while it is open, the Roblox icon is replaced by the 2023
+	    menu's white X, which closes it
+	  * the dark background covers the whole screen (like the 2023
+	    menu), not just the area below the top bar
 
 	Only the menu module is loaded. The 2019 top bar, chat, player
 	list, backpack and loading screen are never created.
@@ -305,6 +307,159 @@ end
 
 table.insert(Connections, LegacyGui.ChildAdded:Connect(WatchDropDownList))
 
+--============================================================*
+-- FULL-SCREEN DARK BACKGROUND
+--============================================================*
+--
+-- The menu's dark shield only fills the safe area: below the top bar
+-- and between the camera cut-out and the screen edges. Like the 2023
+-- menu, make the whole gui full-screen so the shield darkens
+-- everything, and keep the menu itself inside the same margins with
+-- padding so nothing moves.
+
+local MakeGui = function(Name, Order, FullScreen)
+
+	local Gui = Instance.new("ScreenGui")
+	Gui.Name = Name
+	Gui.ResetOnSpawn = false
+	Gui.DisplayOrder = Order
+
+	if FullScreen then
+		Gui.IgnoreGuiInset = true
+		pcall(function()
+			Gui.ScreenInsets = Enum.ScreenInsets.None
+		end)
+		pcall(function()
+			Gui.SafeAreaCompatibility = Enum.SafeAreaCompatibility.None
+		end)
+	end
+
+	Gui.Parent = CoreGui
+
+	return Gui
+
+end
+
+local Probes = {} -- everything created below, for Stop
+
+local FullScreenDone = false
+
+task.spawn(function()
+
+	-- The shield is created by the menu: SettingsShield (clips) > SettingsShield.
+	local Clipping = LegacyGui:FindFirstChild("SettingsShield")
+	local Shield = Clipping and Clipping:FindFirstChild("SettingsShield")
+
+	if not Shield then
+		warn("[2019 menu] shield not found; the dark background keeps its old size")
+		return
+	end
+
+	-- A gui with the insets the menu has now, next to one without any:
+	-- the difference between them is the margin around the menu.
+	local OriginGui = MakeGui("Legacy2019OriginProbe", -100, true)
+	local OriginFrame = Instance.new("Frame")
+	OriginFrame.BackgroundTransparency = 1
+	OriginFrame.BorderSizePixel = 0
+	OriginFrame.Size = UDim2.fromOffset(0, 0)
+	OriginFrame.Parent = OriginGui
+
+	local AreaGui = MakeGui("Legacy2019InsetProbe", -100, false)
+	pcall(function()
+		AreaGui.IgnoreGuiInset = LegacyGui.IgnoreGuiInset
+	end)
+	pcall(function()
+		AreaGui.ScreenInsets = LegacyGui.ScreenInsets
+	end)
+	local AreaFrame = Instance.new("Frame")
+	AreaFrame.BackgroundTransparency = 1
+	AreaFrame.BorderSizePixel = 0
+	AreaFrame.Size = UDim2.fromScale(1, 1)
+	AreaFrame.Parent = AreaGui
+
+	table.insert(Probes, OriginGui)
+	table.insert(Probes, AreaGui)
+
+	local Padding = Instance.new("UIPadding")
+	Padding.Name = "Legacy2019InsetPadding"
+
+	local Measure = function()
+
+		local Success, Left, Top, Right, Bottom = pcall(function()
+			local Origin = OriginFrame.AbsolutePosition
+			local Position = AreaFrame.AbsolutePosition
+			local Size = AreaFrame.AbsoluteSize
+			local Full = OriginGui.AbsoluteSize
+			return
+				Position.X - Origin.X,
+				Position.Y - Origin.Y,
+				(Origin.X + Full.X) - (Position.X + Size.X),
+				(Origin.Y + Full.Y) - (Position.Y + Size.Y)
+		end)
+
+		if not Success then
+			return false
+		end
+
+		-- (A negative margin just means "none".)
+		for _, Value in ipairs({ Left, Top, Right, Bottom }) do
+			if type(Value) ~= "number" or Value < -100 or Value > 200 then
+				return false
+			end
+		end
+
+		-- Not laid out yet.
+		if OriginGui.AbsoluteSize.X <= 0 then
+			return false
+		end
+
+		Padding.PaddingLeft = UDim.new(0, math.max(0, math.floor(Left + 0.5)))
+		Padding.PaddingTop = UDim.new(0, math.max(0, math.floor(Top + 0.5)))
+		Padding.PaddingRight = UDim.new(0, math.max(0, math.floor(Right + 0.5)))
+		Padding.PaddingBottom = UDim.new(0, math.max(0, math.floor(Bottom + 0.5)))
+
+		return true
+
+	end
+
+	-- Freshly created frames report no position for a moment.
+	local Tries = 0
+
+	while Running and not Measure() do
+		Tries += 1
+		if Tries > 40 then
+			warn("[2019 menu] could not measure the screen margins; the dark background keeps its old size")
+			return
+		end
+		task.wait(0.1)
+	end
+
+	if not Running then
+		return
+	end
+
+	Padding.Parent = Shield
+
+	LegacyGui.IgnoreGuiInset = true
+
+	pcall(function()
+		LegacyGui.ScreenInsets = Enum.ScreenInsets.None
+	end)
+
+	pcall(function()
+		LegacyGui.SafeAreaCompatibility = Enum.SafeAreaCompatibility.None
+	end)
+
+	FullScreenDone = true
+
+	-- The margins change when the phone rotates.
+	while Running do
+		task.wait(0.5)
+		Measure()
+	end
+
+end)
+
 local ToggleMenu = function()
 
 	local Success, Result = pcall(function()
@@ -583,27 +738,53 @@ end)
 -- CLOSE BUTTON
 --============================================================*
 --
--- While the 2019 menu is open, the Roblox icon shows the X Roblox's
--- own 2023 top bar used: a white rounded square with the X cut out.
--- Tapping it closes the menu.
+-- While the 2019 menu is open, the Roblox icon is replaced by the X of
+-- the 2023 menu: a white rounded square with a thin X. Tapping it
+-- closes the menu. It lives in its own full-screen gui above the dark
+-- background (so the dark background does not dim it) and follows the
+-- Roblox icon.
 
-local CLOSE_IMAGE = "rbxasset://textures/ui/TopBar/close.png"
+-- Sprite sheet region and size the 2023 menu uses for its X.
+local CLOSE_IMAGE = "rbxassetid://136616213304711"
+
+local CLOSE_RECT_OFFSET = Vector2.new(135, 86)
+
+local CLOSE_RECT_SIZE = Vector2.new(36, 36)
+
+local CLOSE_SIZE = 30
 
 local RunService = game:GetService("RunService")
 
--- It lives inside the Roblox icon (like the invisible tap button), so
--- it always draws on top of the logo and moves with it.
+local CloseGui = MakeGui("Legacy2019MenuCloseGui", LegacyGui.DisplayOrder + 1, true)
+
+-- (0, 0) of the screen, whatever the engine adds to AbsolutePosition.
+local CloseOrigin = Instance.new("Frame")
+CloseOrigin.Name = "Origin"
+CloseOrigin.BackgroundTransparency = 1
+CloseOrigin.BorderSizePixel = 0
+CloseOrigin.Size = UDim2.fromOffset(0, 0)
+CloseOrigin.Parent = CloseGui
+
 local CloseButton = Instance.new("ImageButton")
 CloseButton.Name = CLOSE_NAME
 CloseButton.Image = CLOSE_IMAGE
+CloseButton.ImageRectOffset = CLOSE_RECT_OFFSET
+CloseButton.ImageRectSize = CLOSE_RECT_SIZE
 CloseButton.ScaleType = Enum.ScaleType.Fit
 CloseButton.AutoButtonColor = false
 CloseButton.BackgroundTransparency = 1
 CloseButton.BorderSizePixel = 0
-CloseButton.Position = UDim2.fromScale(0, 0)
-CloseButton.Size = UDim2.fromScale(1, 1)
-CloseButton.ZIndex = Button.ZIndex + 1
+CloseButton.Size = UDim2.fromOffset(CLOSE_SIZE, CLOSE_SIZE)
+CloseButton.Position = UDim2.fromOffset(0, 0)
+CloseButton.ZIndex = 10
 CloseButton.Visible = false
+CloseButton.Parent = CloseGui
+
+do
+	local Corner = Instance.new("UICorner")
+	Corner.CornerRadius = UDim.new(0, 8)
+	Corner.Parent = CloseButton
+end
 
 table.insert(Connections, CloseButton.Activated:Connect(function()
 	pcall(function()
@@ -611,9 +792,8 @@ table.insert(Connections, CloseButton.Activated:Connect(function()
 	end)
 end))
 
--- The X is cut out of the square, so whatever is behind it shows
--- through. While it is shown, hide the icon's own background and the
--- images inside it (the logo), and put them back afterwards.
+-- The Roblox icon keeps its own background and logo while the menu is
+-- open; hide them while the X is shown, and put them back afterwards.
 
 local HiddenBackground = {} -- [ImageButton] = its ImageTransparency
 local HiddenImages = {} -- [ImageLabel] = true
@@ -653,22 +833,39 @@ local RestoreIconVisuals = function()
 
 end
 
+local LastIcon = nil
+
 table.insert(Connections, RunService.RenderStepped:Connect(function()
 
-	-- Follow the tap button onto the icon (the top bar can rebuild it).
+	-- The icon the tap button sits on (the top bar can rebuild it).
 	local Icon = Button.Parent
 
-	if Icon and CloseButton.Parent ~= Icon then
+	if LastIcon and LastIcon ~= Icon then
 		RestoreIconVisuals()
-		CloseButton.Parent = Icon
 	end
 
-	local Show = IsOpen() and Icon ~= nil
+	LastIcon = Icon
+
+	local Show = IsOpen() and Icon ~= nil and Icon:IsDescendantOf(CoreGui)
 
 	CloseButton.Visible = Show
 
 	if Show then
+
 		HideIconVisuals(Icon)
+
+		local Success, X, Y = pcall(function()
+			local Centre = Icon.AbsolutePosition + Icon.AbsoluteSize / 2 - CloseOrigin.AbsolutePosition
+			return Centre.X, Centre.Y
+		end)
+
+		if Success then
+			CloseButton.Position = UDim2.fromOffset(
+				math.floor(X - CLOSE_SIZE / 2 + 0.5),
+				math.floor(Y - CLOSE_SIZE / 2 + 0.5)
+			)
+		end
+
 	elseif next(HiddenBackground) or next(HiddenImages) then
 		RestoreIconVisuals()
 	end
@@ -698,7 +895,13 @@ Environment().Legacy2019Menu = {
 
 		Button:Destroy()
 
-		CloseButton:Destroy()
+		CloseGui:Destroy()
+
+		for _, Probe in ipairs(Probes) do
+			pcall(function()
+				Probe:Destroy()
+			end)
+		end
 
 		LegacyGui:Destroy()
 
