@@ -845,10 +845,93 @@ table.insert(Connections, RunService.RenderStepped:Connect(function()
 end))
 
 --============================================================*
+-- BUTTONS STUCK ON BLUE
+--============================================================*
+--
+-- A menu button turns blue while it is pressed or selected. On a touch
+-- screen it can keep the blue skin after a tap (the Leave / Reset buttons
+-- on the main page, "Don't Leave"): the page changes under the finger and
+-- the button never hears that the finger lifted. On touch-only devices a
+-- button that has been blue for a moment, with no finger down and not
+-- selected, gets its normal skin back.
+
+local UserInputService = game:GetService("UserInputService")
+
+local ButtonGuiService = game:GetService("GuiService")
+
+local BLUE_SKIN = "MenuButtonSelected"
+
+local GRAY_SKIN = "rbxasset://textures/ui/Settings/MenuBarAssets/MenuButton.png"
+
+local ActiveTouches = 0
+
+local LastTouchEvent = 0
+
+table.insert(Connections, UserInputService.InputBegan:Connect(function(Input)
+	if Input.UserInputType == Enum.UserInputType.Touch then
+		ActiveTouches = ActiveTouches + 1
+		LastTouchEvent = os.clock()
+	end
+end))
+
+table.insert(Connections, UserInputService.InputEnded:Connect(function(Input)
+	if Input.UserInputType == Enum.UserInputType.Touch then
+		ActiveTouches = math.max(0, ActiveTouches - 1)
+		LastTouchEvent = os.clock()
+	end
+end))
+
+task.spawn(function()
+
+	local BlueSince = {}
+
+	while Running do
+
+		task.wait(0.2)
+
+		local TouchOnly = UserInputService.TouchEnabled and not UserInputService.MouseEnabled
+
+		-- (a lost "finger up" must not keep the buttons blue for good)
+		local FingerDown = ActiveTouches > 0 and os.clock() - LastTouchEvent < 5
+
+		if TouchOnly and not FingerDown and IsOpen() then
+
+			local Now = os.clock()
+
+			for _, Object in ipairs(LegacyGui:GetDescendants()) do
+
+				if
+					Object:IsA("ImageButton")
+					and string.find(Object.Image, BLUE_SKIN, 1, true)
+					and ButtonGuiService.SelectedObject ~= Object
+				then
+
+					BlueSince[Object] = BlueSince[Object] or Now
+
+					if Now - BlueSince[Object] >= 0.3 then
+						Object.Image = GRAY_SKIN
+						BlueSince[Object] = nil
+					end
+
+				else
+					BlueSince[Object] = nil
+				end
+
+			end
+
+		else
+			table.clear(BlueSince)
+		end
+
+	end
+
+end)
+
+--============================================================*
 -- CLEAN-UP FOR THE NEXT RUN
 --============================================================*
 
-Environment().Legacy2019MenuVersion = "2019-gui-r7"
+Environment().Legacy2019MenuVersion = "2019-gui-r8"
 
 Environment().Legacy2019Menu = {
 	-- One line saying what the menu is doing. The loader shows it on screen,
@@ -903,4 +986,4 @@ Environment().Legacy2019Menu = {
 	end,
 }
 
--- end of 2019 gui (2019-gui-r7)
+-- end of 2019 gui (2019-gui-r8)
