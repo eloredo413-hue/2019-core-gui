@@ -848,9 +848,34 @@ end))
 -- CLEAN-UP FOR THE NEXT RUN
 --============================================================*
 
-Environment().Legacy2019MenuVersion = "2019-gui-r6"
+Environment().Legacy2019MenuVersion = "2019-gui-r7"
 
 Environment().Legacy2019Menu = {
+	-- One line saying what the menu is doing. The loader shows it on screen,
+	-- so a screenshot or recording of a problem also tells the build and state.
+	GetStatus = function()
+
+		local Parts = { tostring(Environment().Legacy2019MenuVersion) }
+
+		pcall(function()
+			local Size = workspace.CurrentCamera.ViewportSize
+			table.insert(Parts, string.format("%.0fx%.0f", Size.X, Size.Y))
+		end)
+
+		table.insert(Parts, "open:" .. (IsOpen() and "Y" or "N"))
+		table.insert(Parts, "X:" .. (CloseButton.Visible and "on" or "off"))
+		table.insert(Parts, "dark:" .. (Backdrop.Visible and "on" or "off"))
+
+		pcall(function()
+			table.insert(Parts, "native:" .. (GuiService.MenuIsOpen and "Y" or "N"))
+		end)
+
+		table.insert(Parts, "icon:" .. ((Button.Parent and Button.Parent:IsDescendantOf(CoreGui)) and "ok" or "none"))
+
+		return table.concat(Parts, " | ")
+
+	end,
+
 	Stop = function()
 
 		Running = false
@@ -877,3 +902,5 @@ Environment().Legacy2019Menu = {
 
 	end,
 }
+
+-- end of 2019 gui (2019-gui-r7)
